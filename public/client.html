@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebPractice10 — Центр нотифікацій</title>
+  <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+  <style>
+    :root{font-family:Inter,Arial,sans-serif;color:#20242c;background:#f3f5f8}
+    *{box-sizing:border-box}body{margin:0;padding:28px}
+    main{max-width:1050px;margin:auto}.top{margin-bottom:24px}
+    h1{margin:0 0 8px;font-size:28px}.muted{color:#687386}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+    section{background:#fff;border:1px solid #e1e5eb;border-radius:12px;padding:20px;box-shadow:0 3px 12px #1720330a}
+    h2{font-size:18px;margin:0 0 14px}
+    input,button{font:inherit;border-radius:7px;padding:10px;border:1px solid #ccd3dd}
+    input{width:100%;margin:5px 0 10px}
+    button{background:#202b3c;color:#fff;border:0;cursor:pointer;margin:3px 3px 3px 0}
+    button.secondary{background:#e9edf3;color:#20242c}
+    ul{padding-left:20px;margin-bottom:0}li{padding:5px 0;overflow-wrap:anywhere}
+    .status{display:inline-block;padding:5px 9px;border-radius:20px;background:#fff0d6;color:#8a5700;font-size:13px}
+    .status.online{background:#dff7e8;color:#176b37}
+    .log{max-height:230px;overflow:auto;background:#f7f8fa;border-radius:8px;padding:10px}
+    .wide{grid-column:1/-1}.hint{font-size:13px;color:#687386}
+  </style>
+</head>
+<body>
+<main>
+  <header class="top">
+    <h1>Центр нотифікацій Season Drop</h1>
+    <p class="muted">Практична робота № 10 · WebSocket, Rooms, SSE та Email · Варіант 3</p>
+    <span id="connection" class="status">Підключення...</span>
+  </header>
+  <div class="grid">
+    <section>
+      <h2>WebSocket: ping / pong</h2>
+      <p class="hint">Перевірка активності двостороннього з'єднання.</p>
+      <button id="ping">Надіслати ping</button>
+      <ul id="pongLog" class="log"></ul>
+    </section>
+    <section>
+      <h2>Глобальне повідомлення</h2>
+      <label for="broadcastText">Текст повідомлення</label>
+      <input id="broadcastText" placeholder="Наприклад, старт розпродажу">
+      <button id="broadcast">Надіслати всім</button>
+      <ul id="globalLog" class="log"></ul>
+    </section>
+    <section>
+      <h2>Кімната колекції</h2>
+      <label for="collectionId">ID колекції</label>
+      <input id="collectionId" value="101">
+      <button id="join">Приєднатися</button>
+      <button id="leave" class="secondary">Вийти</button>
+      <p class="hint">Назва кімнати формується як drop_&lt;collectionId&gt;.</p>
+      <ul id="roomLog" class="log"></ul>
+    </section>
+    <section>
+      <h2>Server-Sent Events</h2>
+      <p class="hint">Системні показники надходять кожні 5 секунд.</p>
+      <span id="sseStatus" class="status">SSE: підключення...</span>
+      <ul id="sseLog" class="log"></ul>
+    </section>
+    <section class="wide">
+      <h2>Комплексне сповіщення: старт сезонної колекції</h2>
+      <p class="hint">POST /collections/:id/start надсилає подію dropStarted у кімнату та HTML-лист через Mailpit.</p>
+      <label for="email">Email отримувача</label>
+      <input id="email" type="email" value="customer@example.com">
+      <label for="collectionName">Назва колекції</label>
+      <input id="collectionName" value="Autumn / Winter 2026">
+      <button id="startDrop">Розпочати продаж колекції</button>
+      <ul id="businessLog" class="log"></ul>
+      <p class="hint">Перегляд перехоплених листів: <a href="http://localhost:8025" target="_blank" rel="noreferrer">Mailpit Web UI</a>.</p>
+    </section>
+  </div>
+</main>
+<script>
+  const socket = io(window.location.origin);
+  const $ = (id) => document.getElementById(id);
+  const add = (id, value) => {
+    const li = document.createElement('li');
+    li.textContent = typeof value === 'string' ? value : JSON.stringify(value);
+    $(id).prepend(li);
+  };
+
+  socket.on('connect', () => {
+    $('connection').textContent = `Підключено: ${socket.id}`;
+    $('connection').className = 'status online';
+  });
+  socket.on('disconnect', (reason) => {
+    $('connection').textContent = `Відключено: ${reason}`;
+    $('connection').className = 'status';
+  });
+  socket.on('pong', (data) => add('pongLog', data));
+  socket.on('globalAlert', (data) => add('globalLog', data));
+  socket.on('joinedRoom', (data) => add('roomLog', data));
+  socket.on('leftRoom', (data) => add('roomLog', data));
+  socket.on('roomError', (data) => add('roomLog', data));
+  socket.on('dropStarted', (data) => add('roomLog', `ОТРИМАНО dropStarted: ${JSON.stringify(data)}`));
+
+  $('ping').onclick = () => socket.emit('ping');
+  $('broadcast').onclick = () => {
+    const message = $('broadcastText').value.trim();
+    if (message) socket.emit('broadcastNotification', { message });
+  };
+  $('join').onclick = () => {
+    const id = $('collectionId').value.trim();
+    if (id) socket.emit('joinRoom', { roomId: `drop_${id}` });
+  };
+  $('leave').onclick = () => {
+    const id = $('collectionId').value.trim();
+    if (id) socket.emit('leaveRoom', { roomId: `drop_${id}` });
+  };
+
+  const source = new EventSource('/notifications/events/stream');
+  source.onopen = () => {
+    $('sseStatus').textContent = 'SSE: підключено';
+    $('sseStatus').className = 'status online';
+  };
+  source.onmessage = (event) => add('sseLog', JSON.parse(event.data));
+  source.addEventListener('systemUpdate', (event) => add('sseLog', JSON.parse(event.data)));
+  source.onerror = () => {
+    $('sseStatus').textContent = 'SSE: очікування повторного підключення';
+    $('sseStatus').className = 'status';
+  };
+
+  $('startDrop').onclick = async () => {
+    const id = $('collectionId').value.trim();
+    const customerEmail = $('email').value.trim();
+    const collectionName = $('collectionName').value.trim();
+    if (!id || !customerEmail) {
+      add('businessLog', 'Заповніть ID колекції та Email.');
+      return;
+    }
+    try {
+      const response = await fetch(`/collections/${encodeURIComponent(id)}/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customerEmail, collectionName })
+      });
+      const data = await response.json();
+      add('businessLog', { httpStatus: response.status, ...data });
+    } catch (error) {
+      add('businessLog', `Помилка запиту: ${error.message}`);
+    }
+  };
+</script>
+</body>
+</html>
